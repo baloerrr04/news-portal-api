@@ -2,6 +2,7 @@ import express, { Response } from "express";
 import { authRoutes } from "./routes/auth/route";
 import cookieParser from "cookie-parser";
 import { articleRouter } from "./routes/article/route";
+import { categoryRouter } from "./routes/category/route";
 const PORT = process.env.PORT ?? 3000;
 
 const server = express();
@@ -20,6 +21,7 @@ server.get("/", (_, res: Response) => {
 });
 
 server.use("/articles", articleRouter);
+server.use("/categories", categoryRouter);
 server.use("/auth", authRoutes);
 
 server.listen(PORT, () => {
