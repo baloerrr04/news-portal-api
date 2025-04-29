@@ -4,9 +4,9 @@ import { validateData } from "../../middlewares/validator";
 import { CreateAndUpdateCommentDTO } from "./dto";
 import { z } from "zod";
 
-export const categoryRouter = express.Router();
+export const commentRouter = express.Router();
 
-categoryRouter.get("/", async (_, res: Response) => {
+commentRouter.get("/", async (_, res: Response) => {
     const commentRes = await getComment()
 
     if (commentRes.isErr()) {
@@ -20,7 +20,7 @@ categoryRouter.get("/", async (_, res: Response) => {
     return;
 })
 
-categoryRouter.post("/", async (req: Request, res: Response) => {
+commentRouter.post("/", validateData(CreateAndUpdateCommentDTO), async (req: Request, res: Response) => {
     const newCommentRequest = req.body as z.infer<typeof CreateAndUpdateCommentDTO>;
     const newCommentRes = await createComment(newCommentRequest)
 
@@ -36,7 +36,7 @@ categoryRouter.post("/", async (req: Request, res: Response) => {
         .json({ message: "Successfully Created Comment", data: newCommentRes.value });
 });
 
-categoryRouter.put("/:id", async (req: Request, res: Response) => {
+commentRouter.put("/:id", validateData(CreateAndUpdateCommentDTO), async (req: Request, res: Response) => {
     const updateCategoryRequest = req.body as z.infer<typeof CreateAndUpdateCommentDTO>;
     const updateCategoryRes = await updateComment(req.params.id, updateCategoryRequest);
 
@@ -52,7 +52,7 @@ categoryRouter.put("/:id", async (req: Request, res: Response) => {
         .json({ message: "Successfully Updated Comment", data: updateCategoryRes.value });
 });
 
-categoryRouter.delete("/:id", async (req: Request, res: Response) => {
+commentRouter.delete("/:id", async (req: Request, res: Response) => {
     const deleteCommentId = req.params.id as string;
     const deleteCommentRes = await deleteComment(deleteCommentId);
 
