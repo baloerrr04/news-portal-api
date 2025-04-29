@@ -1,44 +1,57 @@
-import express, { Request, Response } from "express";
+import express, { Request, RequestHandler, Response } from "express";
 import { createArticle, deleteArticle, getArticles, updateArticle, getArticleById } from "./plu";
 import { validateData } from "../../middlewares/validator";
 import { CreateAndUpdateArticleDTO } from "./dto";
 import { z } from "zod";
+import { authenticate, requireAdmin } from "../../middlewares/auth";
+
 
 export const articleRouter = express.Router();
 
-articleRouter.get("/", async (_, res: Response) => {
-    const articleRes = await getArticles()
+articleRouter.get("/",
+    authenticate as unknown as RequestHandler,
+    requireAdmin as unknown as RequestHandler,
+    async (_, res: Response) => {
+        const articleRes = await getArticles()
 
-    if (articleRes.isErr()) {
-        res.status(articleRes.error.code).json({ message: articleRes.error.message });
-        return;
-    }
+        if (articleRes.isErr()) {
+            res.status(articleRes.error.code).json({ message: articleRes.error.message });
+            return;
+        }
 
-    res
-        .status(200)
-        .json({ message: "Successfully Queried Todos", data: articleRes.value });
-    return;
-})
-
-articleRouter.post("/", async (req: Request, res: Response) => {
-    const newArticleRequest = req.body as z.infer<typeof CreateAndUpdateArticleDTO>;
-    const newArticleRes = await createArticle(newArticleRequest)
-
-    if (newArticleRes.isErr()) {
         res
-            .status(newArticleRes.error.code)
-            .json({ message: newArticleRes.error.message });
-        return
-    }
+            .status(200)
+            .json({ message: "Successfully Queried Articles", data: articleRes.value });
+        return;
+    })
 
-    res
-        .status(200)
-        .json({ message: "Successfully Created Todos", data: newArticleRes.value });
-});
+articleRouter.post("/",
+    authenticate as unknown as RequestHandler,
+    requireAdmin as unknown as RequestHandler,
+    validateData(CreateAndUpdateArticleDTO),
+    async (req: Request, res: Response) => {
+        const newArticleRequest = req.body as z.infer<typeof CreateAndUpdateArticleDTO>;
+        const newArticleRes = await createArticle(newArticleRequest)
 
-articleRouter.put("/:id", async (req: Request, res: Response) => {
+        if (newArticleRes.isErr()) {
+            res
+                .status(newArticleRes.error.code)
+                .json({ message: newArticleRes.error.message });
+            return
+        }
+
+        res
+            .status(200)
+            .json({ message: "Successfully Created Article", data: newArticleRes.value });
+    });
+
+articleRouter.put("/:id", 
+    authenticate as unknown as RequestHandler, 
+    requireAdmin as unknown as RequestHandler,  
+    validateData(CreateAndUpdateArticleDTO), 
+    async (req: Request, res: Response) => {
     const updateArticleRequest = req.body as z.infer<typeof CreateAndUpdateArticleDTO>;
-    const updateArticleRes = await createArticle(updateArticleRequest);
+    const updateArticleRes = await updateArticle(req.params.id, updateArticleRequest);
 
     if (updateArticleRes.isErr()) {
         res
@@ -49,10 +62,13 @@ articleRouter.put("/:id", async (req: Request, res: Response) => {
 
     res
         .status(200)
-        .json({ message: "Successfully Updated Todos", data: updateArticleRes.value });
+        .json({ message: "Successfully Updated Article", data: updateArticleRes.value });
 });
 
-articleRouter.delete("/:id", async (req: Request, res: Response) => {
+articleRouter.delete("/:id",
+    authenticate as unknown as RequestHandler, 
+    requireAdmin as unknown as RequestHandler,   
+    async (req: Request, res: Response) => {
     const deleteArticleId = req.params.id as string;
     const deleteArticleRes = await deleteArticle(deleteArticleId);
 
@@ -64,7 +80,7 @@ articleRouter.delete("/:id", async (req: Request, res: Response) => {
     }
 
     res.status(200).json({
-        message: "Successfully Deleted Todos",
+        message: "Successfully Deleted Article",
         data: deleteArticleRes.value,
     });
 });
