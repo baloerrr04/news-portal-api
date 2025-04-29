@@ -2,229 +2,213 @@ import { z } from "zod";
 import { LoginAndRegisterDTO } from "./dto";
 import { hashPassword, verifyPassword } from "../../lib/auth";
 import { db } from "../../lib/db";
-import { err, fromPromise, ok } from "neverthrow";
+import { err, ok, Result } from "neverthrow";
 import jwt from "jsonwebtoken";
-import { Role } from "@prisma/client";
+import { Role, User } from "@prisma/client";
+import { StatusCodes } from "http-status-codes";
 
-// Interface for token payload
+// Types
 interface TokenPayload {
   userId: string;
   username: string;
   role: Role;
 }
 
+export interface AuthError {
+  message: string;
+  status: number;
+  code?: string;
+}
+
+interface AuthResponse {
+  user: {
+    id: string;
+    username: string;
+    role: Role;
+  };
+  accessToken: string;
+}
+
+// Constants
+const TOKEN_EXPIRY = "24h";
+const INVALID_CREDENTIALS_MSG = "Invalid username or password";
+
 /**
  * Creates a JWT token for the given user
  */
-export function createToken(userData: {
-  id: string;
-  username: string;
-  role: Role;
-}) {
+function createToken(userData: TokenPayload): Result<string, AuthError> {
+  const secret = process.env.AUTH_SECRET;
+  if (!secret) {
+    console.error("AUTH_SECRET is not set");
+    return err({
+      message: "Server configuration error",
+      status: StatusCodes.INTERNAL_SERVER_ERROR,
+      code: "CONFIG_ERROR"
+    });
+  }
+
   try {
-    const secret = process.env.AUTH_SECRET;
-
-    if (!secret) {
-      throw new Error("AUTH_SECRET environment variable is not set");
-    }
-
-    const payload: TokenPayload = {
-      userId: userData.id,
-      username: userData.username,
-      role: userData.role,
-    };
-
-    // Create token with 24 hour expiration
-    const token = jwt.sign(payload, secret, { expiresIn: "24h" });
-
+    const token = jwt.sign(userData, secret, { expiresIn: TOKEN_EXPIRY });
     return ok(token);
   } catch (error) {
-    console.error("Error creating token:", error);
+    console.error("Token creation failed:", error);
     return err({
-      message: "Failed to create authentication token",
-      status: 500,
+      message: "Authentication failed",
+      status: StatusCodes.INTERNAL_SERVER_ERROR,
+      code: "TOKEN_ERROR"
     });
   }
 }
 
-export async function register({
-  password,
-  username,
-}: z.infer<typeof LoginAndRegisterDTO>) {
-  const hashPasswordPromise = await fromPromise(
-    hashPassword(password),
-    (err) => ({
-      err,
-      message:
-        process.env.NODE_ENV === "development"
-          ? "Terjadi kesalahan saat meng-hash password"
-          : "Internal Server Error",
-    })
-  );
-
-  if (hashPasswordPromise.isErr()) {
-    return err({
-      message: hashPasswordPromise.error.message,
-      status: 500,
-    });
-  }
-
-  const userPromise = await fromPromise(
-    db.user.create({
-      data: {
-        username,
-        password: hashPasswordPromise.value.hash,
-        salt: hashPasswordPromise.value.salt,
-      },
-    }),
-    (err) => ({
-      err,
-      message: "Terjadi kesalahan saat memasukkan data",
-    })
-  );
-
-  if (userPromise.isErr()) {
-    return err({
-      message: userPromise.error.message,
-      status: 500,
-    });
-  }
-
-  return ok(userPromise.value);
-}
-
-export async function login({
-  password,
-  username,
-}: z.infer<typeof LoginAndRegisterDTO>) {
-  // Find user by username
-  const userPromise = await fromPromise(
-    db.user.findFirst({
-      where: { username },
-    }),
-    (err) => ({
-      err,
-      message: "Error fetching user data",
-    })
-  );
-
-  if (userPromise.isErr()) {
-    return err({
-      message: userPromise.error.message,
-      status: 500,
-    });
-  }
-
-  const user = userPromise.value;
-
-  // Check if user exists
-  if (!user) {
-    return err({
-      message: "Invalid username or password",
-      status: 401,
-    });
-  }
-
-  // Verify password
-  const isPasswordValid = verifyPassword(password, user.password, user.salt);
-
-  if (!isPasswordValid) {
-    return err({
-      message: "Invalid username or password",
-      status: 401,
-    });
-  }
-
-  // Create JWT token
-  const userData = {
-    id: user.id,
-    username: user.username,
-    role: user.role
-  };
-
-  const tokenResult = createToken(userData);
-
-  if (tokenResult.isErr()) {
-    return err(tokenResult.error);
-  }
-
-  return ok({
-    user: userData,
-    accessToken: tokenResult.value,
-  });
-}
-
-export async function getSession(accessToken: string) {
-  if (!accessToken) {
-    return err({
-      message: "Token is required",
-      status: 401,
-    });
-  }
-
+export async function register(
+  data: z.infer<typeof LoginAndRegisterDTO>
+): Promise<Result<User, AuthError>> {
   try {
-    const secret = process.env.AUTH_SECRET;
+    // Hash password
+    const hashed = await hashPassword(data.password);
+    
+    // Create user
+    const user = await db.user.create({
+      data: {
+        username: data.username,
+        password: hashed.hash,
+        salt: hashed.salt,
+        role: "USER" // Default role
+      }
+    });
 
-    if (!secret) {
+    return ok(user);
+  } catch (error) {
+    console.error("Registration error:", error);
+    
+    if (error instanceof Error && "code" in error && error.code === "P2002") {
       return err({
-        message: "Server configuration error",
-        status: 500,
+        message: "Username already exists",
+        status: StatusCodes.CONFLICT,
+        code: "USERNAME_EXISTS"
       });
     }
 
-    // Verify and decode the token
-    const decoded = jwt.verify(accessToken, secret) as TokenPayload;
+    return err({
+      message: "Registration failed",
+      status: StatusCodes.INTERNAL_SERVER_ERROR,
+      code: "REGISTRATION_ERROR"
+    });
+  }
+}
 
-    // Get fresh user data from database
-    const userPromise = await fromPromise(
-      db.user.findUnique({
-        where: { id: decoded.userId },
-      }),
-      (err) => ({
-        err,
-        message: "Error fetching user data",
-      })
-    );
-
-    if (userPromise.isErr()) {
-      return err({
-        message: userPromise.error.message,
-        status: 500,
-      });
-    }
-
-    const user = userPromise.value;
+export async function login(
+  data: z.infer<typeof LoginAndRegisterDTO>
+): Promise<Result<AuthResponse, AuthError>> {
+  try {
+    // Find user
+    const user = await db.user.findFirst({
+      where: { username: data.username }
+    });
 
     if (!user) {
       return err({
-        message: "User not found",
-        status: 404,
+        message: INVALID_CREDENTIALS_MSG,
+        status: StatusCodes.UNAUTHORIZED,
+        code: "USER_NOT_FOUND"
       });
+    }
+
+    // Verify password
+    const isValid = verifyPassword(data.password, user.password, user.salt);
+    if (!isValid) {
+      return err({
+        message: INVALID_CREDENTIALS_MSG,
+        status: StatusCodes.UNAUTHORIZED,
+        code: "INVALID_PASSWORD"
+      });
+    }
+
+    // Create token
+    const tokenResult = createToken({
+      userId: user.id,
+      username: user.username,
+      role: user.role
+    });
+
+    if (tokenResult.isErr()) {
+      return err(tokenResult.error);
     }
 
     return ok({
       user: {
         id: user.id,
         username: user.username,
+        role: user.role
       },
+      accessToken: tokenResult.value
     });
   } catch (error) {
-    if (error instanceof jwt.JsonWebTokenError) {
+    console.error("Login error:", error);
+    return err({
+      message: "Login failed",
+      status: StatusCodes.INTERNAL_SERVER_ERROR,
+      code: "LOGIN_ERROR"
+    });
+  }
+}
+
+export async function getSession(
+  token: string
+): Promise<Result<{ user: { id: string; username: string } }, AuthError>> {
+  if (!token) {
+    return err({
+      message: "Authorization required",
+      status: StatusCodes.UNAUTHORIZED,
+      code: "MISSING_TOKEN"
+    });
+  }
+
+  try {
+    const secret = process.env.AUTH_SECRET;
+    if (!secret) {
+      throw new Error("AUTH_SECRET not configured");
+    }
+
+    const decoded = jwt.verify(token, secret) as TokenPayload;
+    
+    const user = await db.user.findUnique({
+      where: { id: decoded.userId },
+      select: { id: true, username: true }
+    });
+
+    if (!user) {
       return err({
-        message: "Invalid token",
-        status: 401,
-      });
-    } else if (error instanceof jwt.TokenExpiredError) {
-      return err({
-        message: "Token expired",
-        status: 401,
+        message: "User not found",
+        status: StatusCodes.NOT_FOUND,
+        code: "USER_NOT_FOUND"
       });
     }
 
+    return ok({ user });
+  } catch (error) {
     console.error("Session validation error:", error);
+    
+    if (error instanceof jwt.TokenExpiredError) {
+      return err({
+        message: "Session expired",
+        status: StatusCodes.UNAUTHORIZED,
+        code: "TOKEN_EXPIRED"
+      });
+    }
+    
+    if (error instanceof jwt.JsonWebTokenError) {
+      return err({
+        message: "Invalid token",
+        status: StatusCodes.UNAUTHORIZED,
+        code: "INVALID_TOKEN"
+      });
+    }
+
     return err({
-      message: "Error validating session",
-      status: 500,
+      message: "Session validation failed",
+      status: StatusCodes.INTERNAL_SERVER_ERROR,
+      code: "SESSION_ERROR"
     });
   }
 }
