@@ -63,7 +63,7 @@ export async function updateArticle(id: string, article: z.infer<typeof CreateAn
             error instanceof PrismaClientKnownRequestError &&
             error.code === "P2025"
         ) {
-            return err(createPluError("TODO Tidak Ditemukan", StatusCodes.NOT_FOUND));
+            return err(createPluError("Article Tidak Ditemukan", StatusCodes.NOT_FOUND));
         }
 
         return err(createPluError("Internal Server Error"));
@@ -88,7 +88,7 @@ export async function deleteArticle(id: string) {
             error instanceof PrismaClientKnownRequestError &&
             error.code === "P2025"
         ) {
-            return err(createPluError("TODO Tidak Ditemukan", StatusCodes.NOT_FOUND));
+            return err(createPluError("Article Tidak Ditemukan", StatusCodes.NOT_FOUND));
         }
 
         return err(createPluError("Internal Server Error"));
