@@ -1,12 +1,13 @@
 import { Request, Response, NextFunction } from "express";
 import { getSession } from "../routes/auth/plu";
 import { StatusCodes } from "http-status-codes";
+import { Role } from "@prisma/client";
 
 interface AuthenticatedRequest extends Request {
   user?: {
     id: string;
     username: string;
-    isAdmin: boolean;
+    role: Role;
   };
 }
 
@@ -40,7 +41,11 @@ export const authenticate = async (
     }
 
     // Attach user to request
-    req.user = sessionResult.value.user;
+    req.user = {
+      id: sessionResult.value.user.id,
+      username: sessionResult.value.user.username,
+      role: "USER"
+    }
     next();
   } catch (error) {
     console.error("Auth middleware error:", error);
@@ -50,26 +55,52 @@ export const authenticate = async (
   }
 };
 
+
+export const requireRoles = (allowedRoles: Role[]) => {
+  return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+    if (!req.user) {
+      return res.status(StatusCodes.UNAUTHORIZED).json({
+        success: false,
+        message: "Authentication required",
+        code: "UNAUTHORIZED"
+      });
+    }
+
+    if (!allowedRoles.includes(req.user.role)) {
+      return res.status(StatusCodes.FORBIDDEN).json({
+        success: false,
+        message: `Insufficient privileges. Required roles: ${allowedRoles.join(", ")}`,
+        code: "FORBIDDEN"
+      });
+    }
+
+    next();
+  }
+}
+
+export const requireAdmin = requireRoles(["ADMIN"]);
+export const requireAuth = requireRoles(["USER", "ADMIN"]);
+
 /**
  * Middleware to require admin privileges
  * Usage: server.use('/admin-route', authenticate, requireAdmin, routeHandler);
  */
-export const requireAdmin = (
-  req: AuthenticatedRequest,
-  res: Response,
-  next: NextFunction
-) => {
-  if (!req.user) {
-    return res.status(StatusCodes.UNAUTHORIZED).json({
-      message: "Authentication required",
-    });
-  }
+// export const requireAdmin = (
+//   req: AuthenticatedRequest,
+//   res: Response,
+//   next: NextFunction
+// ) => {
+//   if (!req.user) {
+//     return res.status(StatusCodes.UNAUTHORIZED).json({
+//       message: "Authentication required",
+//     });
+//   }
 
-  if (!req.user.isAdmin) {
-    return res.status(StatusCodes.FORBIDDEN).json({
-      message: "Admin privileges required",
-    });
-  }
+//   if (!req.user.role == "USER") {
+//     return res.status(StatusCodes.FORBIDDEN).json({
+//       message: "Admin privileges required",
+//     });
+//   }
 
-  next();
-};
+//   next();
+// };
